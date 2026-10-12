@@ -1,0 +1,33 @@
+{
+  "kind": "univ4_hook",
+  "hook": {
+    "contract": "PimdHook",
+    "constructorArgs": [
+      "$poolManager",
+      "$token"
+    ],
+    "permissions": [
+      "beforeInitialize",
+      "afterInitialize",
+      "beforeAddLiquidity",
+      "beforeRemoveLiquidity",
+      "beforeSwap",
+      "afterSwap",
+      "beforeSwapReturnDelta",
+      "afterSwapReturnDelta"
+    ]
+  },
+  "token": {
+    "contract": "PimdToken",
+    "name": "Ponzinomics",
+    "symbol": "PIMD",
+    "decimals": 18
+  },
+  "pool": {
+    "pairedCurrency": "0x5f7bb59365ce557c26dbcaa4ee9d39a4b95b7127",
+    "fee": 12500,
+    "tickSpacing": 60,
+    "initialPrice": "79228162514264337593543950336"
+  },
+  "notes": "Audit of the imported code (PimdToken, PimdHook, PimdEngine, L2Block, DeployPimd) done before anything else; nothing was changed. Findings are reported, not fixed. PimdHook taxes every trade in IMD as ERC-6909 claims on currency0: 2.4% buys, 5.6% sells, split 75% holders (pushed to the engine) / 25% team (0x0960e8bd80462e3842bb6620c7c5289a44c4559b), on top of the pool's own 1.25% LP fee which the hook never touches. No owner, no admin: the hook's constructor takes only the pool manager and the token, so there is no $owner or $factory argument; the team, engine, quote and factory are source constants. Gate 1, beforeInitialize (onlyPoolManager): refuses a second pool, a sender other than the hardcoded launch factory 0xa25b02a1e93903b790e6aaf7da1b8b8d50294645, a fee outside {500, 3000, 10000, 12500} (12500 accepted), currency1 != PIMD, currency0 != IMD, and a tick outside 129000 +/- 300; tick 129000 is 2.5e-6 IMD per PIMD = 2,500 IMD for the 1e9 supply, matching the policy. afterInitialize is enabled and only returns its selector. Gate 2: beforeAddLiquidity admits only the factory and only once (seeded flag), so third-party liquidity is blocked; beforeRemoveLiquidity refuses every negative liquidityDelta forever and allows the zero delta that collects the pool's own fee. Gate 3: the engine's register, prune, fire, tally and pay all call _requireLocked (exttload of the PoolManager's Unlocked slot) before any balanceOf read; tally is keeper-only and whole-set; weights use min(balance, lastBal) so a bag must survive one epoch. PimdToken: solmate ERC-20, 1e18 * 1e9 minted once to msg.sender in a no-argument constructor, no mint/burn/pause/owner; burning is a plain transfer to 0xdEaD and totalSupply never moves. PimdEngine at 0xffdb5dd341f692a29b5a0d3d1577df683c1baca4 was read on chain: runtime bytecode matches this tree's build byte for byte outside immutable slots; config is the script's production branch (drip 150 bps/15 min, minInterval 900 s, minBalance 1,000,000 PIMD, fireTip 0.05 IMD, tipPerHolder 0.003 IMD, maxCatchup 6 h, maxHolders 700, two keepers, team = binder = 0x0960...), unbound. Findings for the reviewers: (F1) the hook only works with IMD as currency0, so the factory must land PimdToken at an address numerically above 0x5f7b...7127 or beforeInitialize reverts PoolMustPairToken; the factory's deployment order/salt decides this, the hook does not mine it. (F2) the launch factory is a compile-time constant; if $factory resolves to any other address, initialize and the seed revert NotLaunchFactory. (F3) beforeSwap reverts InitBlockSwap for any swap in the L2 block of initialize, so a factory that swaps in the launch transaction fails. (F4) post-launch the binder must call engine.bind(token, hook, [MerkleDistributor]) or no holder income is ever distributed; bind is one-shot and untestable before launch. (F5) a 25 IMD per tx.origin buy cap applies for 600 s after launch. (F6) keepers are fixed at engine construction; losing both stops the drip permanently (abortEpoch returns IMD to the pot but nothing can weigh an epoch). (F7) swaps that fill partially revert PartialFill by design. 85 local tests pass; fork tests were not run."
+}
